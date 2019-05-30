@@ -59,9 +59,12 @@ Depending on the Request PATH, Method, and query parameters, the request is allo
 
 ## Getting started
 
-First, this is design to work together with a 3scale account, either SaaS or on-premises. 
+3scale-envoy is design to work together with a 3scale account, either SaaS or on-premises, 
+the service you want to expose, will need to be configured with the "Apicast Self-managed" integration 
+method, with the "Production Public Base URL", and "Private Base URL" values set and the configuration
+should be promoted to the production environment in 3scale.
 
-3scale-envoy requires the following information:
+Additionally 3scale-envoy requires the following information:
 
 * **3scale Admin URL**: The admin portal of your tenant, for ex "https://mytenant-admin.3scale.net:443/"
 * **ServiceID**: The Service ID of the API to expose via envoy.
@@ -143,6 +146,8 @@ envoy -c envoyproxy/envoy:latest
 
 ### Containerized envoy: 
 
+We need to export the port for external requests, `tcp/10000`
+
 ```bash
 docker run -p 10000:10000 \ 
     -v $(pwd)/example/envoy-bootstrap.yaml:/tmp/envoy-bootstrap.yaml \
@@ -185,15 +190,26 @@ static_resources:
 And you will need to start the `3scale-envoy` server 
 with the `HOSTNAME` value set to `host.docker.internal`
 
+## Making a request.
+
+By default, the control plane will configure Envoy to expose the port `tcp/10000` for external
+requests, and I configured my API production endpoint to be `production.local` we need to set the proper
+`Host` header: 
+
+```bash
+curl -v -H "Host: production.local" http://127.0.0.1:10000/test\?user_key\=YOUR_USER_KEY 
+```
+ 
+If the `user_key` or `app_key` value is correct, you should get a `200` response and your API result.
+
 ## Limitations & Known issues
 
 As this is a PoC, there's missing support for:
 
 * Limited authentication options, no support for Oauth2 or OIDC.
-* Changing the authz query parameters name from 3scale. 
+* Changing the Authz query parameters name from 3scale. 
 * Policy support, working on the WASM support. 
-* Missing documentation... 
-
+* Missing documentation, tests... 
 
 ## Request improvements, new features
 
