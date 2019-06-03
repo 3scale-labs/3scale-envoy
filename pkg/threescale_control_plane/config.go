@@ -45,7 +45,7 @@ func (c *ThreescaleConfig) newSystemClient() (*sysC.ThreeScaleClient, error) {
 		return nil, err
 	}
 
-	return sysC.NewThreeScale(ap, &http.Client{}), nil
+	return sysC.NewThreeScale(ap, c.AccessToken, &http.Client{}), nil
 }
 func (c *ThreescaleConfig) GetConfig(config threescale.ProxyConfigCache, version int32, AuthPort, PublicPort uint, Host string) (cache.Snapshot, int32) {
 

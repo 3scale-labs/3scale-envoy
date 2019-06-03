@@ -50,7 +50,7 @@ type Authorizer struct {
 	metricsReporter *metrics.Reporter
 }
 
-func (a *Authorizer) systemClientBuilder(systemURL string) (*sysC.ThreeScaleClient, error) {
+func (a *Authorizer) systemClientBuilder(systemURL, accessToken string) (*sysC.ThreeScaleClient, error) {
 	sysURL, err := url.ParseRequestURI(systemURL)
 	if err != nil {
 		return nil, err
@@ -62,7 +62,7 @@ func (a *Authorizer) systemClientBuilder(systemURL string) (*sysC.ThreeScaleClie
 		return nil, err
 	}
 
-	return sysC.NewThreeScale(ap, &http.Client{}), nil
+	return sysC.NewThreeScale(ap, accessToken, &http.Client{}), nil
 }
 func (a *Authorizer) backendClientBuilder(backendURL string) (*backendC.ThreeScaleClient, error) {
 	parsedUrl, err := url.ParseRequestURI(backendURL)
@@ -90,7 +90,7 @@ func (a *Authorizer) AuthRep(request AuthorizeRequest) bool {
 		AccessToken: request.AccessToken,
 	}
 
-	threeScaleClient, err := a.systemClientBuilder(params.SystemUrl)
+	threeScaleClient, err := a.systemClientBuilder(params.SystemUrl, params.AccessToken)
 	if err != nil {
 		log.Fatal(err)
 	}
