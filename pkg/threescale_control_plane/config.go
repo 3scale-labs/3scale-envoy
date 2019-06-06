@@ -47,64 +47,38 @@ func (c *ThreescaleConfig) newSystemClient() (*sysC.ThreeScaleClient, error) {
 
 	return sysC.NewThreeScale(ap, &http.Client{}), nil
 }
-func (c *ThreescaleConfig) GetConfig(config threescale.ProxyConfigCache, version int32, AuthPort, PublicPort uint, Host string) (cache.Snapshot, int32) {
 
-	// Generate the External AuthZ Cluster for envoy
-	var clusterCache []cache.Resource
-	var newVersion int32
-	clusterCache = c.generateAuthZCluster(clusterCache, AuthPort, Host)
+func (c *ThreescaleConfig) ServiceToEnvoy(config threescale.ProxyConfigCache, serviceID string, systemClient *sysC.ThreeScaleClient, clusterCache []cache.Resource) ([]cache.Resource, route.VirtualHost, route.Route) {
 
-	systemClient, err := c.newSystemClient()
-	if err != nil {
-		return cache.Snapshot{}, version
-	}
-
-	proxyConf, err := config.Get(&conf.Params{
-		ServiceId:   c.ServiceID,
+	proxyConf, _ := config.Get(&conf.Params{
+		ServiceId:   serviceID,
 		SystemUrl:   c.SystemURL,
 		AccessToken: c.AccessToken,
 	}, systemClient)
 
-	if err != nil {
-		return cache.Snapshot{}, version
-	}
-
-	if c.CurrentVersion == proxyConf.ProxyConfig.Version {
-		return cache.Snapshot{}, version
-	}
-
 	apiBackend := proxyConf.ProxyConfig.Content.Proxy.APIBackend
 	proxyEndpoint := proxyConf.ProxyConfig.Content.Proxy.Endpoint
 	// Generate the Service Cluster for envoy
-	clusterCache = c.generateServiceCluster(clusterCache, apiBackend)
+
+	clusterCache = c.GenerateServiceCluster(clusterCache, apiBackend)
 
 	//
 	// Generate the Route for the service.
 	//
-	contextExtensions := map[string]string{"service_id": c.ServiceID, "system_url": c.SystemURL, "access_token": c.AccessToken}
+	contextExtensions := map[string]string{"service_id": serviceID, "system_url": c.SystemURL, "access_token": c.AccessToken}
 
 	checkSettings := extAuthService.ExtAuthzPerRoute_CheckSettings{CheckSettings: &extAuthService.CheckSettings{ContextExtensions: contextExtensions}}
-
 	extAuthzPerRoute := extAuthService.ExtAuthzPerRoute{
 		Override: &checkSettings,
 	}
 
 	extAuthConf, _ := util.MessageToStruct(&extAuthzPerRoute)
 
-	proxyEndpointURL, err := url.Parse(proxyEndpoint)
+	proxyEndpointURL, _ := url.Parse(proxyEndpoint)
 
-	if err != nil {
-		return cache.Snapshot{}, version
-	}
-
-	apiBackendURL, err := url.Parse(apiBackend)
-
-	if err != nil {
-		return cache.Snapshot{}, version
-	}
+	apiBackendURL, _ := url.Parse(apiBackend)
 
 	clusterName := strings.Replace(apiBackendURL.Hostname(), ".", "_", -1)
-
 	r := c.newRoute(clusterName, apiBackendURL)
 
 	//
@@ -112,6 +86,45 @@ func (c *ThreescaleConfig) GetConfig(config threescale.ProxyConfigCache, version
 	//
 
 	v := c.newVirtualHost(proxyConf, proxyEndpointURL, r, extAuthConf)
+
+	return clusterCache, v, r
+}
+
+func (c *ThreescaleConfig) GenerateEnvoyConfig(config threescale.ProxyConfigCache, version int32, AuthPort, PublicPort uint, Host string) (cache.Snapshot, int32) {
+
+	// Generate the External AuthZ Cluster for envoy
+	var clusterCache []cache.Resource
+	var newVersion int32
+	var virtualHosts []route.VirtualHost
+	var virtualHost route.VirtualHost
+	var r route.Route
+	var routesCache []cache.Resource
+
+	clusterCache = c.GenerateAuthZCluster(clusterCache, AuthPort, Host)
+
+	systemClient, err := c.newSystemClient()
+	if err != nil {
+		return cache.Snapshot{}, version
+	}
+
+	if c.ServiceID == "" {
+		services, err := systemClient.ListServices(c.AccessToken)
+		if err != nil {
+			panic(err)
+		}
+
+		for _, service := range services.Services {
+			serviceID := service.ID
+			log.Infof("Detected service: %s",serviceID)
+			clusterCache, virtualHost, r = c.ServiceToEnvoy(config, serviceID, systemClient, clusterCache)
+			virtualHosts = append(virtualHosts, virtualHost)
+			routesCache = append(routesCache, &r)
+		}
+	} else {
+		clusterCache, virtualHost , r = c.ServiceToEnvoy(config, c.ServiceID, systemClient, clusterCache)
+		virtualHosts = append(virtualHosts, virtualHost)
+		routesCache = append(routesCache, &r)
+	}
 
 	//
 	// Generate the HTTPConnectionManager for the service
@@ -124,7 +137,7 @@ func (c *ThreescaleConfig) GetConfig(config threescale.ProxyConfigCache, version
 		panic(err)
 	}
 
-	manager := c.newHTTPManager(v, envoyConf)
+	manager := c.newHTTPManager(virtualHosts, envoyConf)
 
 	pbst, err := util.MessageToStruct(manager)
 	if err != nil {
@@ -133,14 +146,11 @@ func (c *ThreescaleConfig) GetConfig(config threescale.ProxyConfigCache, version
 
 	//
 	// Generate the Listeners for the service
-
 	listenersCache := c.newListenersCache(pbst, PublicPort)
-	routesCache := []cache.Resource{&r}
 
 	// Create the cache snapshot and add all the caches.
 	// Set the local currentVersion pointer to the new config version, and increase the version for the snapshot.
 	newVersion = version + 1
-	c.CurrentVersion = proxyConf.ProxyConfig.Version
 
 	snapshot := cache.NewSnapshot(fmt.Sprintf("%d", newVersion), nil, clusterCache, routesCache, listenersCache)
 
@@ -148,7 +158,7 @@ func (c *ThreescaleConfig) GetConfig(config threescale.ProxyConfigCache, version
 }
 
 // TODO: Create better and more generic constructors for Clusters, Listeners, Routes...
-func (c *ThreescaleConfig) generateServiceCluster(clusterCache []cache.Resource, apiBackend string) []cache.Resource {
+func (c *ThreescaleConfig) GenerateServiceCluster(clusterCache []cache.Resource, apiBackend string) []cache.Resource {
 
 	apiBackendURL, err := url.Parse(apiBackend)
 	if err != nil {
@@ -185,7 +195,7 @@ func (c *ThreescaleConfig) generateServiceCluster(clusterCache []cache.Resource,
 	apiBackendCluster := &v2.Cluster{
 		Name: clusterName,
 		ClusterDiscoveryType: &v2.Cluster_Type{
-			Type: v2.Cluster_LOGICAL_DNS,
+			Type: v2.Cluster_STRICT_DNS,
 		},
 		ConnectTimeout: 5 * time.Second,
 		LbPolicy:       v2.Cluster_ROUND_ROBIN,
@@ -214,7 +224,7 @@ func (c *ThreescaleConfig) generateServiceCluster(clusterCache []cache.Resource,
 	clusterCache = append(clusterCache, apiBackendCluster)
 	return clusterCache
 }
-func (c *ThreescaleConfig) generateAuthZCluster(clusterCache []cache.Resource, AuthPort uint, Host string) []cache.Resource {
+func (c *ThreescaleConfig) GenerateAuthZCluster(clusterCache []cache.Resource, AuthPort uint, Host string) []cache.Resource {
 	// externalAuthZ Cluster
 	externalAuthZ := Host
 	externalAuthZPort := uint32(AuthPort)
@@ -333,14 +343,14 @@ func (c *ThreescaleConfig) newExternalAuthService() extAuthService.ExtAuthz {
 	return envoyGrpcConfig
 }
 
-func (c *ThreescaleConfig) newHTTPManager(v route.VirtualHost, envoyConf *types.Struct) *hcm.HttpConnectionManager {
+func (c *ThreescaleConfig) newHTTPManager(v []route.VirtualHost, envoyConf *types.Struct) *hcm.HttpConnectionManager {
 	manager := &hcm.HttpConnectionManager{
 		CodecType:  hcm.AUTO,
 		StatPrefix: "ingress_http",
 		RouteSpecifier: &hcm.HttpConnectionManager_RouteConfig{
 			RouteConfig: &v2.RouteConfiguration{
 				Name:         "local_route",
-				VirtualHosts: []route.VirtualHost{v},
+				VirtualHosts: v,
 			},
 		},
 		HttpFilters: []*hcm.HttpFilter{

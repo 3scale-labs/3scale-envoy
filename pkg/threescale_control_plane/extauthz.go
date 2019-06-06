@@ -10,38 +10,45 @@ import (
 )
 
 type envoyAuth struct {
-	server     grpc.Server
-	authorizer threescale_authorizer.Authorizer
+	Server     grpc.Server
+	Authorizer threescale_authorizer.Server
 }
+
+var (
+	requestDenied = &authZ.CheckResponse{
+		Status: &rpc.Status{
+			Code:    7,
+			Message: "not_allowed",
+			Details: nil,
+		},
+		HttpResponse: &authZ.CheckResponse_DeniedResponse{},
+	}
+	requestAllowed = &authZ.CheckResponse{
+		Status: &rpc.Status{
+			Code:    0,
+			Message: "ok",
+			Details: nil,
+		},
+		HttpResponse: &authZ.CheckResponse_OkResponse{
+			OkResponse: nil,
+		},
+	}
+)
 
 func (ea envoyAuth) Check(ctx context.Context, ar *authZ.CheckRequest) (*authZ.CheckResponse, error) {
 
 	requestHTTP, err := url.ParseRequestURI(ar.Attributes.Request.Http.Path)
 	if err != nil {
-		return &authZ.CheckResponse{
-			Status: &rpc.Status{
-				Code:    7,
-				Message: "not_allowed",
-				Details: nil,
-			},
-			HttpResponse: &authZ.CheckResponse_DeniedResponse{},
-		}, nil
+		return requestDenied, nil
 	}
 
 	if ar.Attributes.ContextExtensions["service_id"] == "" ||
 		ar.Attributes.ContextExtensions["system_url"] == "" ||
 		ar.Attributes.ContextExtensions["access_token"] == "" {
-		return &authZ.CheckResponse{
-			Status: &rpc.Status{
-				Code:    7,
-				Message: "not_allowed",
-				Details: nil,
-			},
-			HttpResponse: &authZ.CheckResponse_DeniedResponse{},
-		}, nil
+		return requestDenied, nil
 	}
 
-	// TODO: Get the credentials from headers etc...
+	// TODO: Get the credentials from headers, or custom query params...
 	request := threescale_authorizer.AuthorizeRequest{
 		Host:        ar.Attributes.Request.Http.Host,
 		ServiceId:   ar.Attributes.ContextExtensions["service_id"],
@@ -54,25 +61,9 @@ func (ea envoyAuth) Check(ctx context.Context, ar *authZ.CheckRequest) (*authZ.C
 		UserKey:     requestHTTP.Query().Get("user_key"),
 	}
 
-	if ea.authorizer.AuthRep(request) {
-		return &authZ.CheckResponse{
-			Status: &rpc.Status{
-				Code:    0,
-				Message: "ok",
-				Details: nil,
-			},
-			HttpResponse: &authZ.CheckResponse_OkResponse{
-				OkResponse: nil,
-			},
-		}, nil
+	if ea.Authorizer.AuthRep(request) {
+		return requestAllowed, nil
 	} else {
-		return &authZ.CheckResponse{
-			Status: &rpc.Status{
-				Code:    7,
-				Message: "not_allowed",
-				Details: nil,
-			},
-			HttpResponse: &authZ.CheckResponse_DeniedResponse{},
-		}, nil
+		return requestDenied, nil
 	}
 }

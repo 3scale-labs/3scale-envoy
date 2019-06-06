@@ -45,12 +45,12 @@ type AuthorizeRequest struct {
 
 type authRepFn func(auth backendC.TokenAuth, key string, svcID string, params backendC.AuthRepParams, ext map[string]string) (backendC.ApiResponse, error)
 
-type Authorizer struct {
-	systemCache     *threescale.ProxyConfigCache
-	metricsReporter *metrics.Reporter
+type Server struct {
+	ProxyCache      *threescale.ProxyConfigCache
+	MetricsReporter *metrics.Reporter
 }
 
-func (a *Authorizer) systemClientBuilder(systemURL string) (*sysC.ThreeScaleClient, error) {
+func (a *Server) SystemClientBuilder(systemURL string) (*sysC.ThreeScaleClient, error) {
 	sysURL, err := url.ParseRequestURI(systemURL)
 	if err != nil {
 		return nil, err
@@ -64,7 +64,7 @@ func (a *Authorizer) systemClientBuilder(systemURL string) (*sysC.ThreeScaleClie
 
 	return sysC.NewThreeScale(ap, &http.Client{}), nil
 }
-func (a *Authorizer) backendClientBuilder(backendURL string) (*backendC.ThreeScaleClient, error) {
+func (a *Server) backendClientBuilder(backendURL string) (*backendC.ThreeScaleClient, error) {
 	parsedUrl, err := url.ParseRequestURI(backendURL)
 	if err != nil {
 		return nil, err
@@ -78,7 +78,7 @@ func (a *Authorizer) backendClientBuilder(backendURL string) (*backendC.ThreeSca
 
 	return backendC.NewThreeScale(be, &http.Client{}), nil
 }
-func (a *Authorizer) AuthRep(request AuthorizeRequest) bool {
+func (a *Server) AuthRep(request AuthorizeRequest) bool {
 
 	var (
 		authRep authRepFn
@@ -90,12 +90,12 @@ func (a *Authorizer) AuthRep(request AuthorizeRequest) bool {
 		AccessToken: request.AccessToken,
 	}
 
-	threeScaleClient, err := a.systemClientBuilder(params.SystemUrl)
+	threeScaleClient, err := a.SystemClientBuilder(params.SystemUrl)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	pce, err := a.systemCache.Get(&params, threeScaleClient)
+	pce, err := a.ProxyCache.Get(&params, threeScaleClient)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -126,10 +126,10 @@ func (a *Authorizer) AuthRep(request AuthorizeRequest) bool {
 	return resp.Success
 }
 
-func NewAuthorizer(cache *threescale.ProxyConfigCache) *Authorizer {
-	return &Authorizer{
-		systemCache:     cache,
-		metricsReporter: nil,
+func NewAuthorizer(cache *threescale.ProxyConfigCache) *Server {
+	return &Server{
+		ProxyCache:      cache,
+		MetricsReporter: nil,
 	}
 }
 

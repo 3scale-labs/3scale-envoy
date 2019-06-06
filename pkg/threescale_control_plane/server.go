@@ -27,7 +27,7 @@ const (
 	nodeID                   = "3scale-envoy-gateway"
 )
 
-type ControlPlane struct {
+type Server struct {
 	CacheTTL, CacheRefreshInterval           time.Duration
 	CacheUpdateRetries, CacheEntriesMax      int
 	AuthPort, XDSport, AdminPort, PublicPort uint
@@ -36,7 +36,7 @@ type ControlPlane struct {
 	Host                                     string
 }
 
-func (ec *ControlPlane) Start() {
+func (ec *Server) Start() {
 
 	ctx := context.Background()
 	signal := make(chan struct{})
@@ -56,7 +56,7 @@ func (ec *ControlPlane) Start() {
 
 	srv := xds.NewServer(config, cb)
 
-	go RunManagementServer(ctx, srv, ec.XDSport)
+	go RunXDSServer(ctx, srv, ec.XDSport)
 
 	if ec.AdminEnabled {
 		go RunManagementGateway(ctx, srv, ec.AdminPort)
@@ -76,7 +76,7 @@ func (ec *ControlPlane) Start() {
 		log.Println("Refreshing config 3scale, version:" + fmt.Sprint(version))
 		snap := cache.Snapshot{}
 
-		snap, newVersion = ec.Config.GetConfig(*proxyCache, version, ec.AuthPort, ec.PublicPort, ec.Host)
+		snap, newVersion = ec.Config.GenerateEnvoyConfig(*proxyCache, version, ec.AuthPort, ec.PublicPort, ec.Host)
 		if newVersion != version {
 			log.Printf("Updating new version: %d", newVersion)
 			err := config.SetSnapshot(nodeID, snap)
@@ -94,14 +94,14 @@ func (ec *ControlPlane) Start() {
 }
 
 // RunExternalAuthzService starts an external-authorization service for envoy
-func RunExternalAuthzService(ctx context.Context, server *threescale_authorizer.Authorizer, port uint) {
+func RunExternalAuthzService(ctx context.Context, server *threescale_authorizer.Server, port uint) {
 
 	var grpcOptions []grpc.ServerOption
 	grpcOptions = append(grpcOptions, grpc.MaxConcurrentStreams(grpcMaxConcurrentStreams))
 	grpcServer := grpc.NewServer(grpcOptions...)
 	ea := envoyAuth{
-		server:     *grpcServer,
-		authorizer: *server,
+		Server:     *grpcServer,
+		Authorizer: *server,
 	}
 
 	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
@@ -123,8 +123,8 @@ func RunExternalAuthzService(ctx context.Context, server *threescale_authorizer.
 
 }
 
-// RunManagementServer starts an xDS server at the given Port.
-func RunManagementServer(ctx context.Context, server xds.Server, port uint) {
+// RunXDSServer starts an xDS Server at the given Port.
+func RunXDSServer(ctx context.Context, server xds.Server, port uint) {
 	var grpcOptions []grpc.ServerOption
 	grpcOptions = append(grpcOptions, grpc.MaxConcurrentStreams(grpcMaxConcurrentStreams))
 	grpcServer := grpc.NewServer(grpcOptions...)
@@ -140,7 +140,7 @@ func RunManagementServer(ctx context.Context, server xds.Server, port uint) {
 	v2.RegisterRouteDiscoveryServiceServer(grpcServer, server)
 	v2.RegisterListenerDiscoveryServiceServer(grpcServer, server)
 
-	log.Printf("Starting Management Server on Port %d\n", port)
+	log.Printf("Starting xDS Server on Port %d\n", port)
 	go func() {
 		if err = grpcServer.Serve(lis); err != nil {
 			log.Error(err)
@@ -151,7 +151,7 @@ func RunManagementServer(ctx context.Context, server xds.Server, port uint) {
 	grpcServer.GracefulStop()
 }
 
-// RunManagementGateway starts an HTTP gateway to an xDS server.
+// RunManagementGateway starts an HTTP gateway to an xDS Server.
 func RunManagementGateway(ctx context.Context, srv xds.Server, port uint) {
 	log.Printf("Starting HTTP/1.1 gateway on Port %d\n", port)
 	server := &http.Server{Addr: fmt.Sprintf(":%d", port), Handler: &xds.HTTPGateway{Server: srv}}

@@ -16,7 +16,7 @@ var (
 	hostname             = kingpin.Flag("hostname", "The hostname or address used by Envoy to reach this control plane.").Required().Envar("HOSTNAME").String()
 	accessToken          = kingpin.Flag("access_token", "Your 3scale admin portal access token.").Required().Envar("ACCESS_TOKEN").String()
 	threescaleAdminUrl   = kingpin.Flag("3scale_admin_url", "The URL of your 3scale Admin portal: \"https://tenant-admin.3scale.net:443/\".").Required().Envar("3SCALE_ADMIN_URL").String()
-	serviceID            = kingpin.Flag("service_id", "The Service ID from 3scale to be used.").Required().Envar("SERVICE_ID").String()
+	serviceID            = kingpin.Flag("service_id", "The Service ID from 3scale to be used, if not set, envoy will expose all the services in the account.").Envar("SERVICE_ID").String()
 	publicPort           = kingpin.Flag("public_port", "Gateway Public port, for external traffic.").Default("10000").Uint()
 	xdsPort              = kingpin.Flag("xds_port", "xDS server, this is where Envoy should connect to get the configuration.").Default("18000").Uint()
 	adminEnabled         = kingpin.Flag("admin_enabled", "Enable the admin endpoint in Envoy. (true or false)").Default("false").Bool()
@@ -33,7 +33,7 @@ func main() {
 
 	log.Info("Starting 3scale Envoy Control Plane")
 
-	ec := threescale_control_plane.ControlPlane{
+	ec := threescale_control_plane.Server{
 		CacheTTL:             *cacheTTL,
 		CacheRefreshInterval: *cacheRefreshInterval,
 		CacheUpdateRetries:   *cacheUpdateRetries,
@@ -51,6 +51,6 @@ func main() {
 			Environment: "production",
 		},
 	}
-
 	ec.Start()
+
 }
